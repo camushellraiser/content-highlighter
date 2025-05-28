@@ -91,12 +91,10 @@ if st.sidebar.button("Run Highlighting"):
                     else:
                         add_preserved_run(para, line[idx:])
                         break
-                # add explicit line break if there is at least one run
+                # add single explicit line break if there is at least one run
                 if para.runs:
                     br = OxmlElement('w:br')
                     para.runs[-1]._r.addnext(br)
-                br = OxmlElement('w:br')
-                para.runs[-1]._r.addnext(br)
 
             # Cleanup unwanted paragraphs
             for para in list(doc.paragraphs):

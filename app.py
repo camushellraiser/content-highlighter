@@ -7,6 +7,7 @@ from docx.oxml.ns import qn
 
 # Base directory for locating the blank template
 BASE_DIR = Path(__file__).parent
+TEMPLATE_PATH = BASE_DIR / 'blank.docx'
 
 st.set_page_config(page_title="XML to DOCX Highlighter", layout="wide")
 st.title("XML to DOCX Batch Highlighter 📝➡️📄")
@@ -43,15 +44,12 @@ if st.sidebar.button("Run Highlighting"):
         results = []
         st.write("## Processing files…")
 
-        # Path to blank template
-        template_path = BASE_DIR / 'blank.docx'
-
         for xml in xml_files:
             xml_bytes = xml.read().decode('utf-8')
             lines = xml_bytes.splitlines()
 
             # Start from an explicitly blank template
-            doc = Document(str(template_path))
+            doc = Document(str(TEMPLATE_PATH))
             # Clear any leftover content
             body = doc._body._element
             for child in list(body):

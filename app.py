@@ -1,123 +1,126 @@
-import streamlit as st
-from pathlib import Path
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from tkinter.ttk import Progressbar
 import os
-from io import BytesIO
 from docx import Document
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
 
-# Base directory for locating the blank template
-BASE_DIR = Path(__file__).parent
-TEMPLATE_PATH = BASE_DIR / 'blank.docx'
+class XMLHighlighterApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("XML to DOCX Batch Highlighter")
+        self.ref_filepath = None
+        self.target_files = []
 
-st.set_page_config(page_title="XML to DOCX Highlighter", layout="wide")
-st.title("XML to DOCX Batch Highlighter 📝➡️📄")
+        # Reference file selection
+        ref_frame = tk.Frame(root, pady=5)
+        ref_frame.pack(fill='x')
+        tk.Button(ref_frame, text="Select Reference DOCX", command=self.load_reference).pack(side='left', padx=5)
+        self.ref_label = tk.Label(ref_frame, text="No reference file selected", wraplength=400)
+        self.ref_label.pack(side='left', padx=5)
 
-st.sidebar.header("Controls")
-ref_file = st.sidebar.file_uploader("Reference DOCX", type=["docx"])
-xml_files = st.sidebar.file_uploader("XML Files", type=["xml"], accept_multiple_files=True)
+        # Target files selection
+        tgt_frame = tk.Frame(root, pady=5)
+        tgt_frame.pack(fill='x')
+        tk.Button(tgt_frame, text="Select XML Files", command=self.load_targets).pack(side='left', padx=5)
+        self.tgt_label = tk.Label(tgt_frame, text="No XML files selected", wraplength=400)
+        self.tgt_label.pack(side='left', padx=5)
 
-if st.sidebar.button("Reset"):
-    st.experimental_rerun()
+        # Output folder selection
+        out_frame = tk.Frame(root, pady=5)
+        out_frame.pack(fill='x')
+        tk.Button(out_frame, text="Select Output Folder", command=self.load_output_folder).pack(side='left', padx=5)
+        self.out_label = tk.Label(out_frame, text="No output folder selected", wraplength=400)
+        self.out_label.pack(side='left', padx=5)
 
-# Helper to preserve whitespace in runs
-def add_preserved_run(para, text, highlight=False):
-    run = para.add_run(text)
-    # Preserve whitespace
-    rPr = run._r.get_or_add_rPr()
-    rPr.set(qn('xml:space'), 'preserve')
-    if highlight:
-        run.font.highlight_color = 7
-    return run
+        # Progress bar
+        self.progress = Progressbar(root, orient='horizontal', length=500, mode='determinate')
+        self.progress.pack(pady=10)
 
-if st.sidebar.button("Run Highlighting"):
-    if not ref_file or not xml_files:
-        st.sidebar.error("Please upload both a reference DOCX and at least one XML file.")
-    else:
-        # Load blank template bytes
-        blank_bytes = open(TEMPLATE_PATH, 'rb').read()
+        # Start button
+        tk.Button(root, text="Start Highlighting", command=self.start).pack(pady=10)
 
-        # Extract reference strings
-        from docx import Document as DocLoader
-        def extract_reference_strings(doc_bytes):
-            doc = DocLoader(BytesIO(doc_bytes))
-            strings = []
-            for para in doc.paragraphs:
-                text = para.text.strip()
-                if not text:
-                    continue
-                style = getattr(para.style, 'name', '').lower()
-                has_num = para._p.find(qn('w:numPr')) is not None
-                has_bold = any(run.bold for run in para.runs if run.text.strip())
-                if has_bold or has_num or 'list paragraph' in style or 'bullet' in style or text.startswith(('•','-','*')):
-                    cleaned = text.lstrip('•-–*0123456789. )').strip()
-                    if cleaned:
-                        strings.append(cleaned)
-            # sort longest first
-            return sorted(strings, key=len, reverse=True)
+    def load_reference(self):
+        path = filedialog.askopenfilename(
+            title="Select Reference DOCX", filetypes=[("Word files", "*.docx")]
+        )
+        if path:
+            self.ref_filepath = path
+            self.ref_label.config(text=os.path.basename(path))
 
-        ref_strings = extract_reference_strings(ref_file.read())
-        results = []
-        st.write("## Processing files…")
+    def load_targets(self):
+        files = filedialog.askopenfilenames(
+            title="Select XML Files to Analyze", filetypes=[("XML files", "*.xml")]
+        )
+        if files:
+            self.target_files = list(files)
+            self.tgt_label.config(text=f"{len(files)} files selected")
 
-        for xml in xml_files:
-            xml_text = xml.read().decode('utf-8')
-            lines = xml_text.split('\n')  # preserve empty lines
+    def load_output_folder(self):
+        folder = filedialog.askdirectory(title="Select Output Folder")
+        if folder:
+            self.output_folder = folder
+            self.out_label.config(text=folder)
 
-            # Initialize doc from blank
-            doc = Document(BytesIO(blank_bytes))
-            # Clear template content
-            body = doc._body._element
-            for child in list(body):
-                body.remove(child)
+    def extract_reference_strings(self):
+        ref_doc = Document(self.ref_filepath)
+        strings = set()
+        for para in ref_doc.paragraphs:
+            text = para.text.strip()
+            if text.startswith(('•', '-', '*')) or 'list paragraph' in getattr(para.style, 'name', '').lower():
+                cleaned = text.lstrip('•-–* ').strip()
+                if cleaned:
+                    strings.add(cleaned)
+        return sorted(strings, key=len, reverse=True)
 
-            # Write each line, preserving whitespace
-            for line in lines:
-                para = doc.add_paragraph()
-                idx = 0
-                length = len(line)
-                while idx < length:
-                    next_pos = length
-                    next_ref = None
-                    for ref in ref_strings:
-                        pos = line.find(ref, idx)
-                        if pos != -1 and pos < next_pos:
-                            next_pos, next_ref = pos, ref
-                    if next_ref:
-                        if next_pos > idx:
-                            add_preserved_run(para, line[idx:next_pos])
-                        add_preserved_run(para, next_ref, highlight=True)
-                        idx = next_pos + len(next_ref)
-                    else:
-                        add_preserved_run(para, line[idx:])
-                        break
-                # add single explicit line break if there is at least one run
-                if para.runs:
-                    br = OxmlElement('w:br')
-                    para.runs[-1]._r.addnext(br)
+    def highlight_in_docx(self, doc, text, ref_strings):
+        runs = []
+        idx = 0
+        while idx < len(text):
+            match = None
+            for ref in ref_strings:
+                if text.startswith(ref, idx):
+                    match = ref
+                    break
+            if match:
+                runs.append({'text': match, 'highlight': True})
+                idx += len(match)
+            else:
+                runs.append({'text': text[idx], 'highlight': False})
+                idx += 1
+        para = self.current_paragraph
+        for run in runs:
+            r = para.add_run(run['text'])
+            if run['highlight']:
+                r.font.highlight_color = 7
 
-            # Cleanup unwanted paragraphs
-            for para in list(doc.paragraphs):
-                txt = para.text.strip().lower()
-                if txt.isdigit() or 'generated by python-docx' in txt:
-                    para._element.getparent().remove(para._element)
-            # Remove paragraphs without highlights
-            for para in list(doc.paragraphs):
-                if not any(run.font.highlight_color for run in para.runs):
-                    para._element.getparent().remove(para._element)
+    def process_file(self, xml_path, ref_strings):
+        with open(xml_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        doc = Document()
+        # Remove default empty content
+        body = doc._body._element
+        for child in list(body):
+            body.remove(child)
+        for line in lines:
+            para = doc.add_paragraph()
+            self.current_paragraph = para
+            self.highlight_in_docx(doc, line.rstrip('\n'), ref_strings)
+        out_name = os.path.splitext(os.path.basename(xml_path))[0] + '_highlighted.docx'
+        doc.save(os.path.join(self.output_folder, out_name))
 
-            # Save to buffer
-            out_buf = BytesIO()
-            doc.save(out_buf)
-            out_buf.seek(0)
-            filename = os.path.splitext(xml.name)[0] + '_highlighted.docx'
-            results.append((filename, out_buf))
+    def start(self):
+        if not self.ref_filepath or not self.target_files or not hasattr(self, 'output_folder'):
+            messagebox.showerror("Error", "Please select a reference DOCX, XML files, and output folder.")
+            return
+        ref_strings = self.extract_reference_strings()
+        self.progress['maximum'] = len(self.target_files)
+        for i, xml_file in enumerate(self.target_files, 1):
+            self.process_file(xml_file, ref_strings)
+            self.progress['value'] = i
+            self.root.update_idletasks()
+        messagebox.showinfo("Done", "Batch highlighting complete!")
 
-        st.success("Batch highlighting complete!")
-        st.write("## Download Results")
-        for name, buf in results:
-            st.download_button(label=f"Download {name}", data=buf, file_name=name,
-                               mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
-
-st.sidebar.markdown("---")
-st.sidebar.write("Built with Streamlit and python-docx.")
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = XMLHighlighterApp(root)
+    root.mainloop()
